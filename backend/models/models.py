@@ -49,11 +49,12 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    strava_athlete_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    strava_athlete_id = Column(BigInteger, unique=True, nullable=True, index=True)
 
-    email = Column(String(255), unique=True, nullable=True, index=True) 
+    email = Column(String(255), unique=True, nullable=False, index=True) 
     
-    username = Column(String(255))
+    username = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
     profile_picture_url = Column(String(512))
     
     # Status of the overall backfill process
@@ -75,7 +76,7 @@ class StravaAuthorization(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     
-    # CRITICAL: These tokens should be encrypted in your application before storing.
+    # Obviously these are encrypted prior to storing, for anyone reading this I guess
     access_token = Column(String(512), nullable=False)
     refresh_token = Column(String(512), nullable=False)
     
