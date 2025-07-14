@@ -2,7 +2,6 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    create_engine,
     Column,
     Integer,
     BigInteger,
@@ -10,7 +9,7 @@ from sqlalchemy import (
     Float,
     DateTime,
     Date,
-    Enum as SQLAlchemyEnum, 
+    Enum as SQLAlchemyEnum,
     ForeignKey,
     UniqueConstraint,
     func,
@@ -19,11 +18,13 @@ from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
-
+# --- ENUM Definitions ---
+# Using Enums is excellent practice for data integrity.
 
 class BackfillStatus(enum.Enum):
-    """Tracks the status of a user's historical activity import."""
-    PENDING = "PENDING"
+    """Tracks the status of a user's historical Strava activity import."""
+    PENDING = "PENDING"      # User has signed up but not yet connected Strava.
+    QUEUED = "QUEUED"        # User connected Strava, backfill is ready to start.
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -43,40 +44,71 @@ class PRDistance(enum.Enum):
     MARATHON = "Marathon"
 
 
-# --- Table Definitions ---
+# --- Table Model Definitions ---
 
 class User(Base):
+    """
+    The central user model for your application. Identity is now based on X.com OAuth.
+    A user can exist before ever connecting their Strava account.
+    """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
+    
+    # X.com OAuth fields (primary identity)
+    x_user_id = Column(String(50), unique=True, nullable=False, index=True)  # X's user ID
+    x_username = Column(String(255), nullable=False, index=True)  # @username
+    x_display_name = Column(String(255))  # Display name from X
+    
+    # Optional fields - can be populated from X profile or user input
+    email = Column(String(255), unique=True, nullable=True, index=True) 
+    username = Column(String(255), unique=True, nullable=True, index=True)
+    
+    # Strava-specific link. Nullable until the user connects their account.
+    # Unique ensures one Strava account can only be linked to one user.
     strava_athlete_id = Column(BigInteger, unique=True, nullable=True, index=True)
-
-    email = Column(String(255), unique=True, nullable=False, index=True) 
     
-    username = Column(String(255), unique=True, nullable=False, index=True)
-    hashed_password = Column(String(255), nullable=False)
     profile_picture_url = Column(String(512))
-    
-    # Status of the overall backfill process
     backfill_status = Column(SQLAlchemyEnum(BackfillStatus), default=BackfillStatus.PENDING, nullable=False)
     
-    # Timestamp of the oldest activity backfilled so far. 
-    backfill_oldest_activity_date = Column(DateTime, nullable=True)
-
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # Relationships
-    authorization = relationship("StravaAuthorization", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    # --- Relationships ---
+    # Defines how this User object connects to other tables.
+    x_authorization = relationship("XAuthorization", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    strava_authorization = relationship("StravaAuthorization", back_populates="user", uselist=False, cascade="all, delete-orphan")
     activities = relationship("Activity", back_populates="user", cascade="all, delete-orphan")
     personal_records = relationship("PersonalRecord", back_populates="user", cascade="all, delete-orphan")
+    # This relationship is added for convenience to easily access all best efforts for a user.
+    best_efforts = relationship("ActivityBestEffort", back_populates="user", cascade="all, delete-orphan")
+
+class XAuthorization(Base):
+    """Stores the secure OAuth tokens for a user's X.com account."""
+    __tablename__ = "x_authorizations"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    
+    # NOTE: These fields store the *encrypted* tokens.
+    access_token = Column(String(512), nullable=False)
+    refresh_token = Column(String(512))  # X OAuth 2.0 may not always provide refresh tokens
+    
+    token_expires_at = Column(DateTime)
+    scopes = Column(String(512))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="x_authorization")
+
+
 class StravaAuthorization(Base):
+    """Stores the secure OAuth tokens for a user's linked Strava account."""
     __tablename__ = "strava_authorizations"
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     
-    # Obviously these are encrypted prior to storing, for anyone reading this I guess
+    # NOTE: These fields store the *encrypted* tokens.
     access_token = Column(String(512), nullable=False)
     refresh_token = Column(String(512), nullable=False)
     
@@ -84,10 +116,11 @@ class StravaAuthorization(Base):
     scopes = Column(String(512))
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    user = relationship("User", back_populates="authorization")
+    user = relationship("User", back_populates="strava_authorization")
 
 
 class Activity(Base):
+    """Stores the high-level data for a single imported Strava activity."""
     __tablename__ = "activities"
 
     id = Column(Integer, primary_key=True)
@@ -100,35 +133,43 @@ class Activity(Base):
     total_elevation_gain_meters = Column(Float)
     activity_start_date = Column(DateTime, nullable=False)
 
-    # A user cannot have the same activity imported twice.
     __table_args__ = (UniqueConstraint("user_id", "strava_activity_id", name="uq_user_strava_activity"),)
 
-    # Relationships
     user = relationship("User", back_populates="activities")
     best_efforts = relationship("ActivityBestEffort", back_populates="activity", cascade="all, delete-orphan")
-    # An activity can be the source for multiple PRs (e.g., a 5k PR set during a 10k run)
     source_for_prs = relationship("PersonalRecord", back_populates="source_activity")
 
 
 class ActivityBestEffort(Base):
+    """
+    Stores every individual best effort found within a single activity.
+    There will be many rows here for each row in the 'activities' table.
+    """
     __tablename__ = "activity_best_efforts"
 
     id = Column(Integer, primary_key=True)
     activity_id = Column(Integer, ForeignKey("activities.id"), nullable=False, index=True)
+    # MODIFICATION: Added a direct user_id link for much faster querying.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
-    # Using an ENUM for the distance ensures data consistency.
     distance = Column(SQLAlchemyEnum(PRDistance), nullable=False)
     elapsed_time_seconds = Column(Integer, nullable=False)
 
-    # Relationships
     activity = relationship("Activity", back_populates="best_efforts")
+    # MODIFICATION: Added the corresponding relationship for the new user_id column.
+    user = relationship("User", back_populates="best_efforts")
 
 
 class PersonalRecord(Base):
+    """
+    The final 'display' table. Stores only a user's single best time for each
+    official distance, calculated from all their historical data.
+    """
     __tablename__ = "personal_records"
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # Link to the activity where this PR was actually set.
     source_activity_id = Column(Integer, ForeignKey("activities.id"), nullable=False)
     
     distance = Column(SQLAlchemyEnum(PRDistance), nullable=False)
@@ -137,9 +178,7 @@ class PersonalRecord(Base):
     
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
-    # A user can only have one official PR for each distance type.
     __table_args__ = (UniqueConstraint("user_id", "distance", name="uq_user_distance_pr"),)
 
-    # Relationships
     user = relationship("User", back_populates="personal_records")
     source_activity = relationship("Activity", back_populates="source_for_prs")

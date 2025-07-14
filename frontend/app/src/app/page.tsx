@@ -1,5 +1,5 @@
-import LoginPage from "@/components/auth/page"
+import AuthPage from "@/components/auth/page"
 
 export default function Home() {
-  return <LoginPage />
+  return <AuthPage/>
 }

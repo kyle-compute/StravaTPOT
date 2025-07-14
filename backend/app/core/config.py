@@ -6,9 +6,11 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     database_url: str = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/strava_leaderboard")
     
-    secret_key: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    
+    # X.com OAuth 2.0 settings
+    x_client_id: Optional[str] = os.getenv("X_CLIENT_ID")
+    x_client_secret: Optional[str] = os.getenv("X_CLIENT_SECRET")
+    x_redirect_uri: Optional[str] = os.getenv("X_REDIRECT_URI")
     
     strava_client_id: Optional[str] = os.getenv("STRAVA_CLIENT_ID")
     strava_client_secret: Optional[str] = os.getenv("STRAVA_CLIENT_SECRET")
