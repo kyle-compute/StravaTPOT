@@ -1,0 +1,11 @@
+# Database
+DATABASE_URL=postgresql://username:password@db:5432/strava_leaderboard
+
+# Strava API
+STRAVA_CLIENT_ID=your_client_id
+STRAVA_CLIENT_SECRET=your_client_secret
+STRAVA_REDIRECT_URI=http://localhost:3000/auth/strava/callback
+
+# App
+SECRET_KEY=your_secret_key_for_jwt
+ENVIRONMENT=development
