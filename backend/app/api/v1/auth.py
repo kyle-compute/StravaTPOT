@@ -160,6 +160,18 @@ def handle_x_callback(callback_data: XAuthCallback, db: Session = Depends(get_db
     )
 
 
+# Placeholder for session-based authentication
+# In production, implement proper JWT or session management
+async def get_current_user(db: Session = Depends(get_db)):
+    """Get current authenticated user from session"""
+    # This is a placeholder - implement proper session/JWT validation
+    # For now, this will need to be implemented based on your session strategy
+    raise HTTPException(
+        status_code=401,
+        detail="Authentication required. Please implement session management."
+    )
+
+
 @router.get("/me")
 def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current user information"""
@@ -174,15 +186,3 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
         "strava_connected": current_user.strava_athlete_id is not None,
         "backfill_status": current_user.backfill_status
     }
-
-
-# Placeholder for session-based authentication
-# In production, implement proper JWT or session management
-async def get_current_user(db: Session = Depends(get_db)):
-    """Get current authenticated user from session"""
-    # This is a placeholder - implement proper session/JWT validation
-    # For now, this will need to be implemented based on your session strategy
-    raise HTTPException(
-        status_code=401,
-        detail="Authentication required. Please implement session management."
-    )
